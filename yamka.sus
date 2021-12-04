@@ -1,330 +1,135 @@
 include impostor.sus
-set output python
+set output html
+set html_topbar_logo /home/portasynthinca3/yamka_press_kit/icons/icon_color_on_transparency.png
+set html_topbar_title Yamka API
 
-# aboba
-
-define Bitfield(1) AccessTokenPerm {
-    SEE_PROFILE(0),
-    SEE_RELATIONSHIPS(1),
-    SEE_GROUPS(2),
-    SEE_DIRECT_MESSAGES(3),
-    EDIT_PROFILE(4),
-    EDIT_RELATIONSHIPS(5),
-
-    SEND_GROUP_MESSAGES(6),
-    SEND_DIRECT_MESSAGES(7),
-    RECEIVE_GROUP_MESSAGES(8),
-    READ_GROUP_MESSAGE_HISTORY(9),
-    RECEIVE_DIRECT_MESSAGES(10),
-    READ_DIRECT_MESSAGE_HISTORY(11),
-    DELETE_GROUP_MESSAGES(12),
-    DELETE_DIRECT_MESSAGES(13),
-
-    CREATE_GROUPS(14),
-    EDIT_GROUPS(15),
-    DELETE_GROUPS(16),
-    JOIN_GROUPS(17),
-    LEAVE_GROUPS(18),
-    BAN_MEMERS(19),
-    KICK_MEMBERS(20),
-    MANAGE_ROLES(21),
-    DELETE_OTHERS_MESSAGES(22),
-
-    CREATE_POLLS(23),
-    VOTE_IN_POLLS(24),
-
-    BOT(26)
+enum(2) ErrorCode {
+    @> Internal server error <@
+    internal_error(0),
+    @> Invalid email supplied to log_in() <@
+    invalid_email(1),
+    @> Invalid password supplied to log_in() <@
+    invalid_password(2),
+    @> Invalid 2FA code supplied to the MFA confirmation <@
+    invalid_mfa_code(3),
+    @> Missing token permission <@
+    token_perm_denied(4),
+    @> Permission denied (other reasons) <@
+    permission_denied(5),
+    @> Invalid access token supplied to auth() <@
+    invalid_access_token(6),
+    @> Failed to perform a contact-related action <@
+    contact_error(7),
+    @> Invalid username supplied to User.send_friend_rq() <@
+    invalid_username(8),
+    @> Invalid invitation code supplied to Group.join() <@
+    invalid_invite(9),
+    @> Invalid code supplied to confirm_email() <@
+    invalid_confirmation_code(10),
+    @> Poll-related error <@
+    poll_error(11),
+    @> Key-related error <@
+    key_error(12),
+    @> Invalid credential(s) supplied to change_password() <@
+    invalid_credential(13)
 }
 
-define Enum(2) StatusCode {
-    OUTDATED(1),
-    INVALID_CONNECTION_STATE(2),
-    LOGIN_ERROR(3),
-    MFA_REQUIRED(4),
-    SIGNUP_SUCCESS(5),
-    SIGNUP_ERROR(6),
-    RATE_LIMITING(7),
-    INVALID_ID(8),
-    FILE_TOO_LARGE(9),
-    PERMISSION_DENIED(10),
-    INVALID_ACCESS_TOKEN(11),
-    USER_NOT_PENDING(12),
-    CONTACT_ACTION_NOT_APPLICABLE(13),
-    INVALID_USERNAME(14),
-    INVALID_ENTITY(15),
-    ENTITY_NOT_PAGINABLE(16),
-    INVALID_INVITE(17),
-    INTERNAL_ERROR(18),
-    UNKNOWN_PACKET(19),
-    FRIEND_REQUEST_SENT(20),
-    PACKET_PARSING_ERROR(21),
-    START_UPLOADING(22),
-    STREAM_END(23),
-    ONE_UPLOAD_ONLY(24),
-    INVALID_CONFIRMATION_CODE(25),
-    POLL_ERROR(26),
-    KEY_ERROR(27),
-    INVALID_REQUEST(28),
-    EXCESSIVE_DATA(29),
-    INVALID_CREDENTIAL(30),
-    PASSWORD_CHANGED(31),
-    MFA_TOGGLED(32)
+enum(1) State {
+    awaiting_login(0)
+}
+set default_state awaiting_login
+
+@> The user has to solve a captcha <@
+confirmation Captcha(0) {
+    request {
+        image_url: Str[match: /https:\/\/.+\.png/];
+    }
+    response {
+        solved: Str[len: 3..8];
+    }
 }
 
-serverbound packet Login(0) {
-    EMAIL: Str[len: 5..128, match: /[^@ \t\r\n]+@[^@ \t\r\n]+\.[^@ \t\r\n]+/];
-    PASSWORD: Str[len: 5..64];
-    PERMS: AccessTokenPerm;
-    AGENT: Agent;
+@> The user has to provide a 2FA 6-/8-digit code <@
+confirmation MFA(1) {
+    request { }
+    response {
+        code: Str[match: /[0-9]{6,8}/];
+    }
 }
 
-bidirectional packet Ping(1) {
-    ECHO: Int(4);
+@> Represents access token permissions <@
+bitfield(4) AccessTokenPerm {
+    see_profile(0),
+    see_relationships(1),
+    see_groups(2),
+    see_direct_messages(3),
+    edit_profile(4),
+    edit_relationships(5),
+
+    send_group_messages(6),
+    send_direct_messages(7),
+    receive_group_messages(8),
+    read_group_message_history(9),
+    receive_direct_messages(10),
+    read_direct_message_history(11),
+    delete_group_messages(12),
+    delete_direct_messages(13),
+
+    create_groups(14),
+    edit_groups(15),
+    delete_groups(16),
+    join_groups(17),
+    leave_groups(18),
+    ban_memers(19),
+    kick_members(20),
+    manage_roles(21),
+    delete_others_messages(22),
+
+    create_polls(23),
+    vote_in_polls(24),
+
+    @> The user is a bot <@
+    bot(26)
 }
 
-bidirectional packet Pong(2) {
-    ECHO: Int(4);
+@> Acquire an access token <@
+globalmethod log_in(0) {
+    email: Str[match: /[^\t \r\n@]+@[^\t \r\n@]+/];
+    password: Str[len: 5..64];
+    perms: AccessTokenPerm;
+    @> A randomly generated string unique for every user agent <@
+    id_str: Str[len: 16..64];
+
+    returns {
+        token: Str[match: /\w{16,64}/];
+    }
+
+    ratelimit 3 every 30s;
+    states { awaiting_login }
+    errors { invalid_email, invalid_password, invalid_mfa_code }
+    confirmations { Captcha, MFA }
 }
 
-serverbound packet Signup(3) {
-    EMAIL: Str[len: 5..128, match: /[^@ \t\r\n]+@[^@ \t\r\n]+\.[^@ \t\r\n]+/];
-    NAME: Str[len: 3..32];
-    AGENT: Agent;
-}
+@> Authorize using an access token <@
+globalmethod auth(1) {
+    token: Str[match: /\w{16,64}/];
 
-serverbound packet DownloadRequest(4) {
-    ID: Int(8);
-}
+    returns {
+        @> The user associated with this token <@
+        user: User;
+        @> The user agent associated with this token <@
+        agent: Agent;
+    }
 
-bidirectional packet FileChunk(5) {
-    POSITION: Int(4);
-    DATA: Bin;
-}
-
-bidirectional packet MFASecret(6) {
-    SECRET: Str[len: 1..24];
-}
-
-clientbound packet SearchResult(7) {
-    LIST: List(Int(8), 2);
-}
-
-bidirectional packet AccessToken(8) {
-    TOKEN: Str[len: 32..64];
-}
-
-define Bitfield(1) ContactTypeAndAction {
-    FRIEND(0), BLOCKED(1), PENDING_IN(2), PENDING_OUT(3), GROUP(4),
-    ADD(7)
-}
-serverbound packet ManageContact(9) {
-    ACTION: ContactTypeAndAction;
-    ID: Int(8);
-}
-
-define Enum(1) SearchTarget {
-    USER(0), GROUP(1), GROUP_MEMBER(2), GROUP_EMOJI(3)
-}
-serverbound packet Search(10) {
-    TYPE: SearchTarget;
-    REF: Int(8);
-    NAME: Str[len: 0..64];
-}
-
-serverbound packet ResolveInvite(11) {
-    CODE: Str[len: 1..20];
-    ADD: Bool;
-}
-
-clientbound packet CreatedBotToken(12) {
-    TOKEN: Str[len: 32..64];
-}
-
-serverbound packet InviteBot(13) {
-    BOT: Int(8);
-    GROUP: Int(8);
-}
-
-clientbound packet ClientIdentity(14) {
-    USER_ID: Int(8);
-    AGENT_ID: Int(8);
-}
-
-bidirectional packet JoinVoice(15) {
-    CHANNEL: Int(8);
-    ADDR: Str[len: 5+];
-    CRYPTO: Bin;
-}
-
-serverbound packet ConfirmEmail(16) {
-    CODE: Str[len: 6..12];
-}
-
-serverbound packet ChangePassword(17) {
-    OLD: Str[len: 5..64];
-    MFA: Str[len: 0..6];
-    NEW: Str[len: 5..64];
-}
-
-define Enum(1) KeyType {
-    IDENTITY(0), PREKEY(1), OTPREKEY(2), IDSIGN(3)
-}
-
-define Enum(1) UserStatus {
-    OFFLINE(0), ONLINE(1), IDLE(2), DND(3), FOCUS(4)
-}
-
-define Enum(1) UserBadge {
-    VERIFIED(1), STAFF(2), BOT(3)
-}
-
-define Enum(1) PaginationDirection {
-    UP(1), DOWN(0)
-}
-define EntityGetModifier Pagination(0) {
-    FIELD: Int(1);
-    DIR: PaginationDirection;
-    FROM: Int(8);
-    CNT: Int(1);
-}
-define EntityGetModifier Context(1) {
-    TYPE: Int(1);
-    ID: Int(8);
-}
-define EntityGetModifier Key(2) {
-    TYPE: KeyType;
+    ratelimit 3 every 60s;
+    states { awaiting_login }
+    errors { invalid_access_token }
 }
 
 entity User(0) {
-    ID(0): Int(8);
-    EMAIL(1): optional Str[len: 5..128, match: /[^@ \t\r\n]+@[^@ \t\r\n]+\.[^@ \t\r\n]+/];
-    NAME(2): Str[len: 3..32];
-    TAG(3): Int(3)[val: 1..99999];
-    STATUS(4): UserStatus;
-    STATUS_TEXT(5): optional Str[len: 1..64];
-    PERMS(6): optional GroupPerm;
-    AVA_FILE(7): Int(8);
-    MFA_ENABLED(8): optional Bool;
-    FRIENDS(9): optional List(Int(8), 2);
-    PENDING_IN(10): optional List(Int(8), 2);
-    PENDING_OUT(11): optional List(Int(8), 2);
-    DM_CHANNEL(12): optional Int(8);
-    GROUPS(13): optional List(Int(8), 2);
-    ROLES(14): optional List(Int(8), 2);
-    COLOR(15): optional Int(4);
-    BADGES(16): List(UserBadge, 1);
-    BOT_OWNER(17): optional Int(8);
-    OWNED_BOTS(18): optional List(Int(8), 1);
-    AGENTS(19): optional List(Int(8), 1);
-    EMAIL_CONFIRMED(20): optional Bool;
-    IDENTITY_KEY(21): optional PKey;
-    PREKEY(22): optional PKey;
-    OTPREKEY(23): optional PKey;
-    IDSIGNKEY(24): optional PKey;
-    NOTE(25): optional Str[len: 0..256];
-    KEY_FPS(26): optional List(Bin, 2);
-    FAV_COLOR(27): Int(4);
+    id: Int(8);
 }
 
-define Bitfield(1) VoiceMemberStatus {
-    SPEAKING(0), MUTED(1), DEAFENED(2)
-}
-
-entity Channel(1) {
-    ID(0): Int(8);
-    NAME(1): Str[len: 1..32];
-    MEMBERS(2): optional List(Int(8), 1);
-    GROUP(3): Int(8);
-    MESSAGES(4): optional List(Int(8), 1);
-    TYPING(5): List(Int(8), 1);
-    UNREAD(6): optional Int(4);
-    FIRST_UNREAD(7): optional Int(8);
-    VOICE(8): Bool;
-    VOICE_USERS(9): optional List(Int(8), 2);
-    VOICE_STATUS(10): optional List(VoiceMemberStatus, 2);
-    MENTIONS(11): optional List(Int(8), 2);
-    LCID(12): optional Int(4);
-}
-
-entity Group(2) {
-    ID(0): Int(8);
-    NAME(1): Str[len: 1..48];
-    CHANNELS(2): optional List(Int(8), 1);
-    OWNER(3): optional Int(8);
-    ROLES(4): optional List(Int(8), 1);
-    ICON(5): Int(8);
-    INVITES(6): optional List(Str[len: 6..12], 1);
-    EVERYONE_ROLE(7): optional Int(8);
-    EMOJI(8): optional List(Int(8), 1);
-}
-
-entity Message(3) {
-    ID(0): Int(8);
-    STATES(1): List(Int(8), 1)[cnt: 1..50];
-    CHANNEL(2): Int(8);
-    SENDER(3): Int(8);
-    LATEST(4): MessageState;
-    LCID(5): Int(4);
-}
-
-entity Role(4) {
-    ID(0): Int(8);
-    NAME(1): Str[len: 1..32];
-    COLOR(2): Int(4);
-    PRIORITY(4): Int(2);
-    PERMS(5): GroupPerm;
-    MEMBERS(6): optional List(Int(8), 1);
-}
-
-entity File(5) {
-    ID(0): Int(8);
-    NAME(1): Str[len: 1..128, match: /[^#%&\{\}\\<>\*\?\/$!'":@\+`\|=]+/];
-    SIZE(2): optional Str[len: 3..10, match: /[0-9]+x[0-9]+/]; # in pixels
-    PREVIEW(3): optional Str[len: 1..48];
-    LENGTH(4): Int(4);
-    EMOJI_NAME(5): optional Str[len: 1..32];
-    EMOJI_GROUP(6): optional Int(8);
-}
-
-define Enum(1) SectionType { 
-    TEXT(0), FILE(1), CODE(2), QUOTE(3),
-    INVITE(4), USER(5), BOT_UI(6), POLL(7)
-}
-entity MessageState(6) {
-    ID(0): Int(8);
-    MSG_ID(1): Int(8);
-    SECTIONS(2): List(compound {
-        TYPE: SectionType;
-        BLOB: Int(8);
-        TEXT: Str[len: 0..4096];
-    });
-    ENCRYPTED(3): Bin;
-}
-
-entity Poll(7) {
-    ID(0): Int(8);
-    OPTIONS(1): List(Str[len: 1..256], 1)[cnt: 1..10];
-    OPTION_VOTES(2): optional List(Int(3), 1)[cnt: 1..10];
-    SELF_VOTE(3): optional Int(1);
-    TOTAL_VOTED(4): Int(3);
-}
-
-define Enum(1) AgentDevice {
-    LINUX(0), WINDOWS(1), MACOS(2), DESKTOP(3), ANDROID(4),
-    IOS(5), MOBILE(6), MCU(7), APP(8)
-}
-entity Agent(8) {
-    ID(0): Int(8);
-    OWNER(1): Int(8);
-    TYPE(2): AgentDevice;
-    NAME(3): Str[len: 1..96];
-    ONLINE(4): Bool;
-}
-
-entity PKey(9) {
-    ID(0): Int(8);
-    KEY(1): Bin;
-    SIGN(2): optional Bin;
-    TYPE(3): KeyType;
-    USER(4): Int(8);
+entity Agent(1) {
+    id: Int(8);
 }
